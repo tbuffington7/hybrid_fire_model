@@ -1,4 +1,5 @@
 from flashover import firecalc
-
+import pdb
 configlocation = 'modelconfig.yaml'
-print(firecalc(configlocation, 'dalmarnock', 'dalmarnock',8))
+A = firecalc(configlocation, 'dalmarnock','dalmarnock',7)
+print(A[0],A[1])

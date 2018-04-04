@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 #Specified by user
-roomwidth = 4.6 #xdir
-roomlength = 5.2 #ydir
+roomwidth = 4.75 #xdir
+roomlength = 3.5 #ydir
 
 #Loops through all csv files in current directory and creates a pictures in the ./pictures directory
 for filename in os.listdir('.'):

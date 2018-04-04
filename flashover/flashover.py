@@ -63,7 +63,7 @@ def firecalc(configlocation, room, layout, firstign):
 
     #Creating a ist of accumulated FTP for each item
     FTP = np.zeros(num_items) #FTP for each item
-
+    HRR_list = list()
 
     for t, time in enumerate(timelist):
 
@@ -107,7 +107,8 @@ def firecalc(configlocation, room, layout, firstign):
              
                         if FTP[i] > iteminfo.FTP[item]:
                             firelist[i] = time
-    return [flashover,firelist]
+        HRR_list.append(HRR)
+    return [flashover,firelist,HRR_list]
 
     
                                            
