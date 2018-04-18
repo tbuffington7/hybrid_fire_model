@@ -5,7 +5,11 @@ import pandas as pd
 import numpy as np
 import pdb
 
-def firecalc(configlocation, room, layout, firstign):
+class fireLocError(Exception):
+    pass
+
+
+def firecalc(configlocation, room, layout, fireloc):
     #Setting the location of config file, which holds settings
     configs = yaml.load(open(configlocation))
     #In that file, the 'firecalc' section is relevant for this code
@@ -31,6 +35,8 @@ def firecalc(configlocation, room, layout, firstign):
         roominfo['ventheight'][0]**.5)))\
         *roominfo['ventarea'][0]*roominfo['ventheight'][0]**.5
 
+    print Q_FO
+
     #If/when flashover occurs, the NaN is replaced with a time
     flashover = float('NaN')
 
@@ -51,19 +57,35 @@ def firecalc(configlocation, room, layout, firstign):
     + '/' + layout + '.csv')
     itemlist = rawlayout.item
 
-    #Retriving the centroid to edge distance matrix for point source
-    distmatrix = np.loadtxt(configuse['layoutloc'] \
-    + 'dist/' + layout + '.csv', delimiter=',')
+
+    #Then determine which item ignited first
+    firstign = False
+    for item in range(0,len(itemlist)):
+        if (rawlayout['x1'][item] <= fireloc[0] <= rawlayout['x2'][item]) \
+        and (rawlayout['y1'][item] <= fireloc[1] <= rawlayout['y2'][item]):
+            firstign = item
+
+    #If no item has the fire coordinate, raise an error
+    if firstign == False:
+        raise fireLocError("The specified fire location is not on an item.")
 
     num_items = len(itemlist)
 
-    #Firelist holds the time at which each item is ignited
-    firelist = np.ones(num_items)*configuse['simtime']
-    firelist[firstign] = 0
+    #holds a list of ignition times
+    fire_list = np.ones(len(itemlist))*configuse['simtime']
+    fire_list[firstign] = 0
+
+    #Holds the location of ignition
+    ign_loc = [None]*len(itemlist)
+    ign_loc[firstign] = fireloc
+
+    source_list = [None]*len(itemlist)
+    source_list[firstign] = fireloc
+
 
     #Creating a ist of accumulated FTP for each item
     FTP = np.zeros(num_items) #FTP for each item
-    HRR_list = list()
+
 
     for t, time in enumerate(timelist):
 
@@ -73,42 +95,88 @@ def firecalc(configlocation, room, layout, firstign):
         HRR = 0
 
         for f,fire in enumerate(itemlist):
-            #Add all fires' contribution to overall HRR
-            #Negative times (unignited) are given zero in interp
-            HRR = HRR + np.interp(time - firelist[f]\
-            ,hrrdic[fire][:,0],hrrdic[fire][:,1])
+            if fire_list[f] != configuse['simtime']:
+
+                #Add all fires' contribution to overall HRR
+                #Negative times (unignited) are given zero in interp
+                HRR = HRR + np.interp(time - fire_list[f]\
+                ,hrrdic[fire][:,0],hrrdic[fire][:,1])
 
 
+                #Check if flashover conditions are met
+                if HRR > Q_FO and np.isnan(flashover):
+                    flashover = time
+                    #If anything hasn't ignited, it has now
+                    fire_list[fire_list==configuse['simtime']] = time
+                for i,item in enumerate(itemlist):
+                    #Only executes if ith item hasn't ignited 
+                    #AND fth item has ignited
+                    
+                    if fire_list[i] == configuse['simtime']:
 
-            #Check if flashover conditions are met
-            if HRR > Q_FO and np.isnan(flashover):
-                flashover = time
-                #If anything hasn't ignited, it has now
-                firelist[firelist==configuse['simtime']] = time
+                        #Use point source to find incident flux on ith item
 
-            for i,item in enumerate(itemlist):
-                #Only executes if ith item hasn't ignited 
-                #AND fth item has ignited
-                if firelist[f] != configuse['simtime'] and\
-                firelist[i] == configuse['simtime']:
+                        #Calculate distance from f source to nearest i edge
+                        if rawlayout.iloc[i]['x1'] <= source_list[f][0] <= rawlayout.iloc[i]['x2']:
+                            x_edge = source_list[f][0]
+                        elif rawlayout.iloc[i]['x1'] > source_list[f][0]:
+                            x_edge = rawlayout.iloc[i]['x1']
+                        elif rawlayout.iloc[i]['x2'] < source_list[f][0]:
+                            x_edge = rawlayout.iloc[i]['x2']
 
-                    #Use point source to find incident flux on ith item
-                    incident_flux[i] = incident_flux[i] \
-                    + iteminfo.radfrac[fire]\
-                    *np.interp(time - firelist[f]\
-                    ,hrrdic[fire][:,0],hrrdic[fire][:,1]) \
-                    /(4*np.pi*distmatrix[f][i]**2)
 
-                    #Then use FTP model
-                    if incident_flux[i] > iteminfo.qcrit[item]:
-                        FTP[i] = FTP[i] + (incident_flux[i]\
-                        -iteminfo.qcrit[item])\
-                        **iteminfo.n[item]*configuse['timestep']
-             
-                        if FTP[i] > iteminfo.FTP[item]:
-                            firelist[i] = time
-        HRR_list.append(HRR)
-    return [flashover,firelist,HRR_list]
+                        if rawlayout.iloc[i]['y1'] <= source_list[f][1] <= rawlayout.iloc[i]['y2']:
+                            y_edge = source_list[f][1]
+                        elif rawlayout.iloc[i]['y1'] > source_list[f][1]:
+                             y_edge = rawlayout.iloc[i]['y1']
+                        elif rawlayout.iloc[i]['y2'] < source_list[f][1] :
+                            y_edge = rawlayout.iloc[i]['y2']
+                        dist = np.linalg.norm(np.asarray(source_list[f])-[x_edge,y_edge])
+
+
+                        incident_flux[i] = incident_flux[i] \
+                        + iteminfo.radfrac[fire]\
+                        *np.interp(time - fire_list[f]\
+                        ,hrrdic[fire][:,0],hrrdic[fire][:,1]) \
+                        /(4*np.pi*dist**2)
+
+                        #Then use FTP model
+                        if incident_flux[i] > iteminfo.qcrit[item]:
+                            FTP[i] = FTP[i] + (incident_flux[i]\
+                            -iteminfo.qcrit[item])\
+                            **iteminfo.n[item]*configuse['timestep']
+                 
+                            if FTP[i] > iteminfo.FTP[item]:
+                                fire_list[i] = time
+                                ign_loc[i]= [x_edge,y_edge]
+                                source_list[i] = [x_edge,y_edge]
+
+                if np.isnan(flashover):
+                    #Finally update source of f
+                    xCentroid = (rawlayout['x1'][f] + rawlayout['x2'][f]) / 2.0
+                    yCentroid = (rawlayout['y1'][f] + rawlayout['y2'][f]) / 2.0
+
+                    #The value of the max HRR
+                    maxHrr = max(hrrdic[fire][:,1])
+
+                    #The index where it occurs
+                    indexmax = np.where(hrrdic[fire][:,1]==maxHrr)[0][0]
+                    fraclist = hrrdic[fire][:,1]/maxHrr
+
+                    frac = np.interp(time - fire_list[f],\
+                        hrrdic[fire][:,0][0:indexmax+1],fraclist[0:indexmax+1])
+
+                    #Uses simple interpolation to migrate source toward centroid
+                    xSource = ign_loc[f][0] + \
+                    frac*(xCentroid-ign_loc[f][0])
+
+                    ySource = ign_loc[f][1] + \
+                    frac*(yCentroid-ign_loc[f][1])
+
+                    source_list[f] = [xSource,ySource]
+
+    pdb.set_trace()
+    return [flashover,fire_list]
 
     
                                            
